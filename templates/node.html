@@ -1,0 +1,79 @@
+<table class="table table-condensed">
+    <thead>
+    <tr>
+        <th colspan="4">{{ node.name }}</th>
+    </tr>
+    {% if len(node.apps) %}
+    <tr>
+        <th>Service</th>
+        <th>Version</th>
+        <th>Status</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for app_name, app in node.apps.items() %}
+    <tr {% if app.name in max_versions and max_versions[app.name] == app.version %}class="success"
+        {% elif app.name in node.transitions %}class="info" {% else %}class="warning"{% end %}>
+        <td>{{ app.name }}</td>
+        {% if app.name in node.transitions %}
+        <td>{{ app.version }} ~ {{ node.transitions[app.name] }}</td>
+        <td>Transitioning</td>
+        <td>
+            <div class="progress">
+                <div class="progress-bar" role="progressbar" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100"
+                     style="width: 50%;">
+                    <span class="sr-only">In Progress</span>
+                </div>
+            </div>
+        </td>
+        {% else %}
+        <td>{{ app.version }}</td>
+        <td>{{ app.status}}</td>
+        <td>
+                <div class="btn-group">
+                <button type="button" class="btn btn-primary dropdown-toggle" data-toggle="dropdown">Manage<span class="caret"></span>
+                </button>
+                <ul class="dropdown-menu" role="menu">
+                    <li>
+                        <a href="/api/start?node={{ node.name }}&app={{ app.name }}">Start</a>
+                        <a href="/api/stop?node={{ node.name }}&app={{ app.name }}">Stop</a>
+                        <a href="/api/restart?node={{ node.name }}&app={{ app.name }}">Restart</a>
+                    </li>
+                </ul>
+            </div>
+            {% if len(app.upgrades) %}
+            <div class="btn-group">
+                <button type="button" class="btn btn-primary dropdown-toggle" data-toggle="dropdown">
+                    Upgrade <span class="caret"></span>
+                </button>
+                <ul class="dropdown-menu" role="menu">
+                    {% for version in app.upgrades %}
+                    <li>
+                        <a href="/api/deploy?node={{ node.name }}&app={{ app.name }}&version={{ version }}">{{ version }}</a>
+                    </li>
+                    {% end %}
+                </ul>
+            </div>
+            {% end %}
+            {% if len(app.downgrades) %}
+            <div class="btn-group">
+                <button type="button" class="btn btn-danger dropdown-toggle" data-toggle="dropdown">
+                    Downgrade <span class="caret"></span>
+                </button>
+                <ul class="dropdown-menu" role="menu">
+                    {% for version in app.downgrades %}
+                    <li>
+                        <a href="/api/deploy?node={{ node.name }}&app={{ app.name }}&version={{ version }}">{{ version }}</a>
+                    </li>
+                    {% end %}
+                </ul>
+            </div>
+            {% end %}
+        </td>
+        {% end %}
+    </tr>
+    {% end %}
+    </tbody>
+    {% end %}
+</table>
