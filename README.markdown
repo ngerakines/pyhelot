@@ -1,5 +1,7 @@
 # About
 
+Helot is a cluster command and control application. It describes and utilizes a lightweight event protocol using [Serf](http://www.serfdom.io/) to start, stop, restart, upgrade and downgrade applications within a serf connected cluster.
+
 # Protocol
 
 ## Serf Agents
