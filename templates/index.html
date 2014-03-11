@@ -75,6 +75,7 @@
                 newNode.id = json.id
                 newNode.className = 'col-md-4 node'
                 $('#nodes').append(newNode);
+                reorder();
             }
             $(selector).load('http://localhost:9999/api/node?node=' + json.name, function () {
                 $('#' + json.id + ' .start-button').on('click', function (event) {
@@ -116,6 +117,8 @@
             event.preventDefault();
             command_node('restart', $(this).data('name'))
         });
+
+        reorder();
     })
 
     function command_all(command) {
@@ -131,6 +134,12 @@
                 console.log(data);
             });
         });
+    }
+
+    function reorder() {
+        /* $('#nodes .node').sort(function(a,b) {
+            return $(a).id > $(b).id;
+        }).appendTo('#nodes'); */
     }
 
 </script>
