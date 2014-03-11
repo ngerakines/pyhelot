@@ -378,6 +378,12 @@ class StartHandler(tornado.web.RequestHandler):
         start(node, app)
         self.redirect('/')
 
+    def post(self):
+        node = self.get_argument('node')
+        app = self.get_argument('app')
+        start(node, app)
+        self.write({'status': 'ok'})
+
 
 class StopHandler(tornado.web.RequestHandler):
     def get(self):
@@ -386,6 +392,12 @@ class StopHandler(tornado.web.RequestHandler):
         stop(node, app)
         self.redirect('/')
 
+    def post(self):
+        node = self.get_argument('node')
+        app = self.get_argument('app')
+        stop(node, app)
+        self.write({'status': 'ok'})
+
 
 class RestartHandler(tornado.web.RequestHandler):
     def get(self):
@@ -393,6 +405,13 @@ class RestartHandler(tornado.web.RequestHandler):
         app = self.get_argument('app')
         restart(node, app)
         self.redirect('/')
+
+    def post(self):
+        node = self.get_argument('node')
+        app = self.get_argument('app')
+        restart(node, app)
+        self.write({'status': 'ok'})
+
 
 if __name__ == "__main__":
     tornado.options.parse_command_line()

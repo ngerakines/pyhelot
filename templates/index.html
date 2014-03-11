@@ -41,12 +41,16 @@
 <div class="container">
     <div class="page-header">
         <h1>Nodes</h1>
-        <p><a href="#" class="btn btn-primary btn-sm"><i class="fa fa-play"></i> Start All</a> <a href="#" class="btn btn-danger btn-sm"><i class="fa fa-power-off"></i> Stop
-            All</a> <a href="#" class="btn btn-warning btn-sm"><i class="fa fa-spinner"></i> Restart All</a></p>
+
+        <p>
+            <button id="start-all" class="btn btn-primary btn-sm"><i class="fa fa-play"></i> Start All</button>
+            <button id="stop-all" class="btn btn-danger btn-sm"><i class="fa fa-power-off"></i> Stop All</button>
+            <button id="restart-all" class="btn btn-warning btn-sm"><i class="fa fa-spinner"></i> Restart All</button>
+        </p>
     </div>
     <div class="row" id="nodes">
         {% for name, node in nodes.items() %}
-        <div class="col-md-4" id="{{ node.name }}">
+        <div class="col-md-4" id="{{ node.name }}" class="node">
             {% module Template("node.html", node=node, max_versions=max_versions) %}
         </div>
         {% end %}
@@ -61,21 +65,74 @@
 <script src="{{ static_url('js/bootstrap.min.js') }}"></script>
 <script>
     $(document).ready(function () {
+
         var ws = new WebSocket("ws://localhost:9999/websocket");
         ws.onmessage = function (evt) {
             var json = JSON.parse(evt.data);
             selector = '#' + json.id
-            if ($(selector).length) {
-                $(selector).load('http://localhost:9999/api/node?node=' + json.name)
-            } else {
+            if ($(selector).length == 0) {
                 newNode = document.createElement('div');
                 newNode.id = json.id
-                newNode.className = 'col-md-7'
+                newNode.className = 'col-md-4 node'
                 $('#nodes').append(newNode);
-                $(selector).load('http://localhost:9999/api/node?node=' + json.name)
             }
+            $(selector).load('http://localhost:9999/api/node?node=' + json.name, function () {
+                $('#' + json.id + ' .start-button').on('click', function (event) {
+                    event.preventDefault();
+                    command_node('start', $(this).data('name'))
+                });
+                $('#' + json.id + ' .stop-button').on('click', function (event) {
+                    event.preventDefault();
+                    command_node('stop', $(this).data('name'))
+                });
+                $('#' + json.id + ' .restart-button').on('click', function (event) {
+                    event.preventDefault();
+                    command_node('restart', $(this).data('name'))
+                });
+            });
         };
-    });
+
+        $("#start-all").on('click', function (event) {
+            event.preventDefault();
+            command_all('start');
+        });
+        $("#stop-all").on('click', function (event) {
+            event.preventDefault();
+            command_all('stop');
+        });
+        $("#restart-all").on('click', function (event) {
+            event.preventDefault();
+            command_all('restart');
+        });
+        $(".start-button").on('click', function (event) {
+            event.preventDefault();
+            command_node('start', $(this).data('name'))
+        });
+        $(".stop-button").on('click', function (event) {
+            event.preventDefault();
+            command_node('stop', $(this).data('name'))
+        });
+        $(".restart-button").on('click', function (event) {
+            event.preventDefault();
+            command_node('restart', $(this).data('name'))
+        });
+    })
+
+    function command_all(command) {
+        $('.node-info').each(function () {
+            command_node(command, $(this).data('name'));
+        });
+    }
+
+    function command_node(command, node) {
+        var apps = $('#' + node + ' h3.node-info').data('apps');
+        $.each(apps.split(","), function (index, value) {
+            $.post('/api/' + command, {'node': node, 'app': value}).done(function (data) {
+                console.log(data);
+            });
+        });
+    }
+
 </script>
 </body>
 </html>
