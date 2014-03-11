@@ -7,6 +7,7 @@
     <title>Deploy Dashboard</title>
     <link href="{{ static_url('css/bootstrap.css') }}" rel="stylesheet">
     <link href="{{ static_url('css/custom.css') }}" rel="stylesheet">
+    <link href="//netdna.bootstrapcdn.com/font-awesome/4.0.3/css/font-awesome.css" rel="stylesheet">
     <!-- HTML5 shim and Respond.js IE8 support of HTML5 elements and media queries -->
     <!--[if lt IE 9]>
       <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
@@ -40,10 +41,12 @@
 <div class="container">
     <div class="page-header">
         <h1>Nodes</h1>
+        <p><a href="#" class="btn btn-primary btn-sm"><i class="fa fa-play"></i> Start All</a> <a href="#" class="btn btn-danger btn-sm"><i class="fa fa-power-off"></i> Stop
+            All</a> <a href="#" class="btn btn-warning btn-sm"><i class="fa fa-spinner"></i> Restart All</a></p>
     </div>
     <div class="row" id="nodes">
         {% for name, node in nodes.items() %}
-        <div class="col-md-7" id="{{ node.name }}">
+        <div class="col-md-4" id="{{ node.name }}">
             {% module Template("node.html", node=node, max_versions=max_versions) %}
         </div>
         {% end %}
