@@ -367,60 +367,68 @@ class EventHandler(BaseHandler):
 
 
 class DeployHandler(tornado.web.RequestHandler):
-    def get(self):
+    def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         version = self.get_argument('version')
         if len(node) and len(app) and len(version):
             deploy(node, app, version)
-        self.redirect('/')
 
-
-class StartHandler(tornado.web.RequestHandler):
     def get(self):
-        node = self.get_argument('node')
-        app = self.get_argument('app')
-        if len(node) and len(app):
-            start(node, app)
+        self.handle()
         self.redirect('/')
 
     def post(self):
+        self.handle()
+        self.write({'status': 'ok'})
+
+
+class StartHandler(tornado.web.RequestHandler):
+    def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         if len(node) and len(app):
             start(node, app)
+
+    def get(self):
+        self.handle()
+        self.redirect('/')
+
+    def post(self):
+        self.handle()
         self.write({'status': 'ok'})
 
 
 class StopHandler(tornado.web.RequestHandler):
-    def get(self):
+    def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         if len(node) and len(app):
             stop(node, app)
+
+    def get(self):
+        self.handle()
         self.redirect('/')
 
     def post(self):
-        node = self.get_argument('node')
-        app = self.get_argument('app')
-        if len(node) and len(app):
-            stop(node, app)
+        self.handle()
         self.write({'status': 'ok'})
 
 
 class RestartHandler(tornado.web.RequestHandler):
-    def get(self):
+
+    def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         if len(node) and len(app):
             restart(node, app)
+
+    def get(self):
+        self.handle()
         self.redirect('/')
 
     def post(self):
-        node = self.get_argument('node')
-        app = self.get_argument('app')
-        if len(node) and len(app):
-            restart(node, app)
+        self.handle()
         self.write({'status': 'ok'})
 
 
