@@ -50,7 +50,7 @@
     </div>
     <div class="row" id="nodes">
         {% for name, node in nodes.items() %}
-        <div class="col-md-4" id="{{ node.name }}" class="node">
+        <div class="col-md-4" id="{{ node.id() }}" class="node">
             {% module Template("node.html", node=node, max_versions=max_versions) %}
         </div>
         {% end %}
@@ -80,15 +80,15 @@
             $(selector).load('http://localhost:9999/api/node?node=' + json.name, function () {
                 $('#' + json.id + ' .start-button').on('click', function (event) {
                     event.preventDefault();
-                    command_node('start', $(this).data('name'))
+                    command_node('start', $(this).data('id'))
                 });
                 $('#' + json.id + ' .stop-button').on('click', function (event) {
                     event.preventDefault();
-                    command_node('stop', $(this).data('name'))
+                    command_node('stop', $(this).data('id'))
                 });
                 $('#' + json.id + ' .restart-button').on('click', function (event) {
                     event.preventDefault();
-                    command_node('restart', $(this).data('name'))
+                    command_node('restart', $(this).data('id'))
                 });
             });
         };
@@ -107,15 +107,15 @@
         });
         $(".start-button").on('click', function (event) {
             event.preventDefault();
-            command_node('start', $(this).data('name'))
+            command_node('start', $(this).data('id'))
         });
         $(".stop-button").on('click', function (event) {
             event.preventDefault();
-            command_node('stop', $(this).data('name'))
+            command_node('stop', $(this).data('id'))
         });
         $(".restart-button").on('click', function (event) {
             event.preventDefault();
-            command_node('restart', $(this).data('name'))
+            command_node('restart', $(this).data('id'))
         });
 
         reorder();
@@ -123,7 +123,7 @@
 
     function command_all(command) {
         $('.node-info').each(function () {
-            command_node(command, $(this).data('name'));
+            command_node(command, $(this).data('id'));
         });
     }
 

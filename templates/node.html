@@ -1,12 +1,12 @@
 <div class="panel panel-default">
     <div class="panel-heading">
-        <h3 class="panel-title node-info" data-name="{{ node.name }}" data-apps="{% for i, (app_name, app) in enumerate(node.apps.items()) %}{% if i %}, {% end %}{{ app.name }}{% end %}">{{ node.name }}</h3>
+        <h3 class="panel-title node-info" data-id="{{ node.id() }}" data-name="{{ node.name }}" data-apps="{% for i, (app_name, app) in enumerate(node.apps.items()) %}{% if i %}, {% end %}{{ app.name }}{% end %}">{{ node.name }}</h3>
     </div>
     <div class="panel-body">
         <p>
-            <button class="btn btn-primary btn-xs start-button" data-name="{{ node.name }}"><i class="fa fa-play"></i> Start All</button>
-            <button class="btn btn-danger btn-xs stop-button" data-name="{{ node.name }}"><i class="fa fa-power-off"></i> Stop All</button>
-            <button class="btn btn-warning btn-xs restart-button" data-name="{{ node.name }}"><i class="fa fa-spinner"></i> Restart All</button>
+            <button class="btn btn-primary btn-xs start-button" data-id="{{ node.id() }}"><i class="fa fa-play"></i> Start All</button>
+            <button class="btn btn-danger btn-xs stop-button" data-id="{{ node.id() }}"><i class="fa fa-power-off"></i> Stop All</button>
+            <button class="btn btn-warning btn-xs restart-button" data-id="{{ node.id() }}"><i class="fa fa-spinner"></i> Restart All</button>
         </p>
     </div>
     <table class="table">

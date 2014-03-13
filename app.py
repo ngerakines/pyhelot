@@ -2,6 +2,7 @@ import os
 import subprocess
 import datetime
 import json
+import hashlib
 from semantic_version import validate, Spec, Version
 import tornado.auth
 import tornado.httpserver
@@ -74,6 +75,10 @@ def restart(node, app):
     subprocess.call(command)
 
 
+def node_id(node_name):
+    return hashlib.md5(node_name).hexdigest()[0:9]
+
+
 class App(object):
     def __init__(self, name, version, status, upgrades=[], downgrades=[]):
         self._name = name
@@ -129,6 +134,9 @@ class Node(object):
         self._name = name
         self._apps = apps
         self._transitions = transitions
+
+    def id(self):
+        return node_id(self._name)
 
     @property
     def name(self):
@@ -239,7 +247,8 @@ class SocketHandler(tornado.websocket.WebSocketHandler):
 
 class BaseHandler(tornado.web.RequestHandler):
 
-    def notify_clients(self, payload):
+    def notify_clients(self, node_name):
+        payload = json.dumps({'id': node_id(node_name), 'name': node_name})
         for c in cl:
             c.write_message(payload)
 
@@ -252,15 +261,15 @@ class MainHandler(BaseHandler):
         self.render("index.html", nodes=matched_nodes, max_versions=max_versions)
 
     def filter(self, query):
-        if query == '*':
-            return nodes
         found_nodes = {}
         for name, node in nodes.items():
-            if self.node_match(node, query):
+            if self.node_match(node, query) and len(node.apps):
                 found_nodes[name] = node
         return found_nodes
 
     def node_match(self, node, query):
+        if query == '*':
+            return True
         if query in node.name:
             return True
         for app_name, app in node.apps.items():
@@ -301,10 +310,8 @@ class VersionsApiHandler(BaseHandler):
 
         for name, node in nodes.items():
             if app in node.apps:
-                print "node %s has app %s" % (name, app)
                 node.update_versions(versions)
-                payload = json.dumps({'id': name, 'name': name})
-                self.notify_clients(payload)
+                self.notify_clients(name)
 
         self.write({'versions': versions, 'max_versions': max_versions})
 
@@ -337,8 +344,7 @@ class EventHandler(BaseHandler):
     def handle_member(self):
         refresh_members()
         for node_name in self.collect_member_nodes():
-            payload = json.dumps({'id': node_name, 'name': node_name})
-            self.notify_clients(payload)
+            self.notify_clients(node_name)
 
     def handle_status(self, event, event_name):
         v = len(event_name) - len('-status')
@@ -347,13 +353,11 @@ class EventHandler(BaseHandler):
         if self.is_transitioning(event, node_name):
             node = nodes[node_name]
             node.start_transition(app, event['to'])
-            payload = json.dumps({'id': node_name, 'name': node_name})
-            self.notify_clients(payload)
+            self.notify_clients(node_name)
         if self.is_transitioned(event, node_name):
             node = nodes[node_name]
             node.end_transition(app, event['version'])
-            payload = json.dumps({'id': node_name, 'name': node_name})
-            self.notify_clients(payload)
+            self.notify_clients(node_name)
 
     def is_transitioning(self, event, node_name):
         return 'status' in event and event['status'] == 'transitioning' and node_name in nodes
@@ -367,7 +371,8 @@ class DeployHandler(tornado.web.RequestHandler):
         node = self.get_argument('node')
         app = self.get_argument('app')
         version = self.get_argument('version')
-        deploy(node, app, version)
+        if len(node) and len(app) and len(version):
+            deploy(node, app, version)
         self.redirect('/')
 
 
@@ -375,13 +380,15 @@ class StartHandler(tornado.web.RequestHandler):
     def get(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
-        start(node, app)
+        if len(node) and len(app):
+            start(node, app)
         self.redirect('/')
 
     def post(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
-        start(node, app)
+        if len(node) and len(app):
+            start(node, app)
         self.write({'status': 'ok'})
 
 
@@ -389,13 +396,15 @@ class StopHandler(tornado.web.RequestHandler):
     def get(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
-        stop(node, app)
+        if len(node) and len(app):
+            stop(node, app)
         self.redirect('/')
 
     def post(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
-        stop(node, app)
+        if len(node) and len(app):
+            stop(node, app)
         self.write({'status': 'ok'})
 
 
@@ -403,13 +412,15 @@ class RestartHandler(tornado.web.RequestHandler):
     def get(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
-        restart(node, app)
+        if len(node) and len(app):
+            restart(node, app)
         self.redirect('/')
 
     def post(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
-        restart(node, app)
+        if len(node) and len(app):
+            restart(node, app)
         self.write({'status': 'ok'})
 
 
