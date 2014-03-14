@@ -39,11 +39,13 @@ def refresh_members():
     command = ['serf', 'members', '-format=json', '-detailed']
     response = subprocess.check_output(command)
     parsed_members = json.loads(response)
+    print parsed_members
     for member in parsed_members['members']:
         name = member['name']
         if name not in nodes:
             nodes[name] = Node(name, {})
         node = nodes[name]
+        node.status = member['status']
         node.update_apps(member)
 
 
@@ -130,9 +132,10 @@ class App(object):
 
 
 class Node(object):
-    def __init__(self, name, apps={}, transitions={}):
+    def __init__(self, name, status='unknown', apps={}, transitions={}):
         self._name = name
         self._apps = apps
+        self._status = status
         self._transitions = transitions
 
     def id(self):
@@ -147,6 +150,15 @@ class Node(object):
     def apps(self):
         """Get the apps."""
         return self._apps
+
+    @property
+    def status(self):
+        """Get the app status."""
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        self._status = value
 
     @property
     def transitions(self):
@@ -253,12 +265,37 @@ class BaseHandler(tornado.web.RequestHandler):
             c.write_message(payload)
 
 
+def node_highlight(node):
+    for app_name in node.apps:
+        if app_name in node.transitions:
+            return 'panel-default'
+    if node.status == 'alive':
+        return 'panel-success'
+    return 'panel-danger'
+
+
+def app_highlight(app, node):
+    # {% if app.name in max_versions and max_versions[app.name] == app.version %}class="success"
+    # {% elif app.name in node.transitions %}class="info" {% else %}class="warning"{% end %}
+    if app.name in node.transitions:
+        return 'info'
+    if app.status == 'running':
+        return 'success'
+    return ''
+
+
 class MainHandler(BaseHandler):
 
     def get(self):
         query = self.get_argument('query', '*')
         matched_nodes = self.filter(query)
-        self.render("index.html", nodes=matched_nodes, max_versions=max_versions)
+
+        self.render(
+            "index.html",
+            nodes=matched_nodes,
+            max_versions=max_versions,
+            node_highlight=node_highlight,
+            app_highlight=app_highlight)
 
     def filter(self, query):
         found_nodes = {}
@@ -274,9 +311,9 @@ class MainHandler(BaseHandler):
             return True
         for app_name, app in node.apps.items():
             if query in app_name:
-                return True;
+                return True
             if query in app.version:
-                return True;
+                return True
             if query in app.status:
                 return True
         return False
@@ -289,7 +326,12 @@ class NodeHandler(BaseHandler):
         if name not in nodes:
             raise tornado.web.HTTPError(404)
         node = nodes[name]
-        self.render("node.html", node=node, max_versions=max_versions)
+        self.render(
+            "node.html",
+            node=node,
+            max_versions=max_versions,
+            node_highlight=node_highlight,
+            app_highlight=app_highlight)
 
 
 class VersionsApiHandler(BaseHandler):

@@ -51,7 +51,7 @@
     <div class="row" id="nodes">
         {% for name, node in nodes.items() %}
         <div class="col-md-4" id="{{ node.id() }}" class="node">
-            {% module Template("node.html", node=node, max_versions=max_versions) %}
+            {% module Template("node.html", node=node, max_versions=max_versions, node_highlight=node_highlight, app_highlight=app_highlight) %}
         </div>
         {% end %}
     </div>

@@ -1,4 +1,4 @@
-<div class="panel panel-default">
+<div class="panel {{ node_highlight(node) }}">
     <div class="panel-heading">
         <h3 class="panel-title node-info" data-id="{{ node.id() }}" data-name="{{ node.name }}" data-apps="{% for i, (app_name, app) in enumerate(node.apps.items()) %}{% if i %}, {% end %}{{ app.name }}{% end %}">{{ node.name }}</h3>
     </div>
@@ -11,8 +11,7 @@
     </div>
     <table class="table">
         {% for app_name, app in node.apps.items() %}
-        <tr {% if app.name in max_versions and max_versions[app.name] == app.version %}class="success"
-            {% elif app.name in node.transitions %}class="info" {% else %}class="warning"{% end %}>
+        <tr class=" {{ app_highlight(app, node) }}">
             <td>{{ app.name }}</td>
             {% if app.name in node.transitions %}
             <td>{{ app.version }} ~ {{ node.transitions[app.name] }}</td>
