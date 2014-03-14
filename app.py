@@ -3,6 +3,7 @@ import subprocess
 import datetime
 import json
 import hashlib
+import serf
 from semantic_version import validate, Spec, Version
 import tornado.auth
 import tornado.httpserver
@@ -16,12 +17,6 @@ define("port", default=9999, help="run on the given port", type=int)
 
 UNKNOWN_VERSION = '?.?.?'
 
-received_events = []
-nodes = {}
-versions = {}
-max_versions = {}
-cl = []
-
 
 def parse_event(event):
     print "parsing %s" % event
@@ -33,47 +28,6 @@ def parse_event(event):
         else:
             event_data[part] = True
     return event_data
-
-
-def refresh_members():
-    command = ['serf', 'members', '-format=json', '-detailed']
-    response = subprocess.check_output(command)
-    parsed_members = json.loads(response)
-    for member in parsed_members['members']:
-        name = member['name']
-        if name not in nodes:
-            nodes[name] = Node(name)
-        node = nodes[name]
-        node.status = member['status']
-        node.update_apps(member)
-
-
-def deploy(node, app, version):
-    event = "%s-deploy" % app
-    payload = "node=%s version=%s'" % (node, version)
-    command = ['serf', 'event', event, payload]
-    subprocess.call(command)
-
-
-def start(node, app):
-    event = "%s-start" % app
-    payload = "node=%s" % node
-    command = ['serf', 'event', event, payload]
-    subprocess.call(command)
-
-
-def stop(node, app):
-    event = "%s-stop" % app
-    payload = "node=%s" % node
-    command = ['serf', 'event', event, payload]
-    subprocess.call(command)
-
-
-def restart(node, app):
-    event = "%s-restart" % app
-    payload = "node=%s" % node
-    command = ['serf', 'event', event, payload]
-    subprocess.call(command)
 
 
 def node_id(node_name):
@@ -165,7 +119,7 @@ class Node(object):
         return self._transitions
 
     def update_apps(self, member):
-        tags = member['tags'] if 'tags' in member else {}
+        tags = member['Tags'] if 'Tags' in member else {}
         given_apps = tags['apps'].split(',') if 'apps' in tags else []
         for key, app in self.apps.items():
             if key in given_apps:
@@ -217,17 +171,95 @@ class Node(object):
 
 class Application(tornado.web.Application):
     def __init__(self):
+        ## NKG: Is this the right way to do it?
+        self._serf_client = serf.Client(auto_reconnect=True)
+        self._nodes = {}
+        self._versions = {}
+        self._max_versions = {}
+        self._clients = []
+        self._received_events = []
+
         handlers = [
-            (r"/", MainHandler),
-            (r"/event", EventHandler),
-            (r"/api/refresh", RefreshHandler),
-            (r"/api/versions", VersionsApiHandler),
-            (r"/api/deploy", DeployHandler),
-            (r"/api/start", StartHandler),
-            (r"/api/stop", StopHandler),
-            (r"/api/restart", RestartHandler),
-            (r'/api/node', NodeHandler),
-            (r"/websocket", SocketHandler)
+            (r"/", MainHandler, (dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            ))),
+            (r"/event", EventHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/api/refresh", RefreshHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/api/versions", VersionsApiHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/api/deploy", DeployHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/api/start", StartHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/api/stop", StopHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/api/restart", RestartHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r'/api/node', NodeHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            )),
+            (r"/websocket", SocketHandler, dict(
+                serf_client=self._serf_client,
+                nodes=self._nodes,
+                versions=self._versions,
+                max_versions=self._max_versions,
+                received_events=self._received_events,
+                clients=self._clients
+            ))
         ]
         settings = dict(
             blog_title=u"Helot",
@@ -239,29 +271,107 @@ class Application(tornado.web.Application):
         tornado.web.Application.__init__(self, handlers, **settings)
 
 
-class RefreshHandler(tornado.web.RequestHandler):
-    def get(self):
-        refresh_members()
-        self.write(nodes)
-
-
-class SocketHandler(tornado.websocket.WebSocketHandler):
-
-    def open(self):
-        if self not in cl:
-            cl.append(self)
-
-    def on_close(self):
-        if self in cl:
-            cl.remove(self)
-
-
 class BaseHandler(tornado.web.RequestHandler):
+    def initialize(
+            self,
+            serf_client=None,
+            nodes=None,
+            versions=None,
+            max_versions=None,
+            received_events=None,
+            clients=None):
+        self._serf_client = serf_client
+        self._nodes = nodes
+        self._versions = versions
+        self._max_versions = max_versions
+        self._clients = clients
+        self._received_events = received_events
+
+    def update_members(self):
+        members_response = self._serf_client.members().request()
+        print members_response
+        if len(members_response) > 1:
+            print "More than one response for command received."
+        if len(members_response) > 0:
+            body = members_response[0].body
+            print body
+            if 'Members' not in body:
+                print "No members element found in body."
+                return
+            for member in body['Members']:
+                node_name = member['Name']
+                if node_name not in self._nodes:
+                    self._nodes[node_name] = Node(node_name)
+                node = self._nodes[node_name]
+                node.status = member['Status']
+                node.update_apps(member)
 
     def notify_clients(self, node_name):
         payload = json.dumps({'id': node_id(node_name), 'name': node_name})
-        for c in cl:
-            c.write_message(payload)
+        for client in self._clients:
+            client.write_message(payload)
+
+    def publish_event(self, event, payload):
+        self._serf_client.event(
+            Name=event,
+            Payload=payload,
+            Coalesce=False).request()
+
+    def deploy(self, node, app, version):
+        event = "%s-deploy" % app
+        payload = "node=%s version=%s'" % (node, version)
+        self.publish_event(event, payload)
+
+    def start(self, node, app):
+        event = "%s-start" % app
+        payload = "node=%s" % node
+        self.publish_event(event, payload)
+
+    def stop(self, node, app):
+        event = "%s-stop" % app
+        payload = "node=%s" % node
+        self.publish_event(event, payload)
+
+    def restart(self, node, app):
+        event = "%s-restart" % app
+        payload = "node=%s" % node
+        self.publish_event(event, payload)
+
+
+class RefreshHandler(BaseHandler):
+    #def initialize(self, serf_client=None, nodes=None):
+    #    self._serf_client = serf_client
+    #    self._nodes = nodes
+
+    def get(self):
+        self.refresh_members(self._serf_client, self._nodes)
+        self.write(self._nodes)
+
+
+## NKG: This is being done poorly.
+class SocketHandler(tornado.websocket.WebSocketHandler):
+    def initialize(
+            self,
+            serf_client=None,
+            nodes=None,
+            versions=None,
+            max_versions=None,
+            received_events=None,
+            clients=None):
+        self._serf_client = serf_client
+        self._nodes = nodes
+        self._versions = versions
+        self._max_versions = max_versions
+        self._clients = clients
+        self._received_events = received_events
+
+    def open(self):
+        if self not in self._clients:
+            self._clients.append(self)
+
+    def on_close(self):
+        if self in self._clients:
+            self._clients.remove(self)
 
 
 def node_highlight(node):
@@ -284,6 +394,9 @@ def app_highlight(app, node):
 
 
 class MainHandler(BaseHandler):
+    #def initialize(self, nodes=None, max_versions=None):
+    #    self._nodes = nodes
+    #    self._max_versions = max_versions
 
     def get(self):
         query = self.get_argument('query', '*')
@@ -292,13 +405,13 @@ class MainHandler(BaseHandler):
         self.render(
             "index.html",
             nodes=matched_nodes,
-            max_versions=max_versions,
+            max_versions=self._max_versions,
             node_highlight=node_highlight,
             app_highlight=app_highlight)
 
     def filter(self, query):
         found_nodes = {}
-        for name, node in nodes.items():
+        for name, node in self._nodes.items():
             if self.node_match(node, query) and len(node.apps):
                 found_nodes[name] = node
         return found_nodes
@@ -319,47 +432,60 @@ class MainHandler(BaseHandler):
 
 
 class NodeHandler(BaseHandler):
+    #def initialize(self, nodes=None, max_versions=None):
+    #    self._nodes = nodes
+    #    self._max_versions = max_versions
 
     def get(self):
         name = self.get_argument('node')
-        if name not in nodes:
+        if name not in self._nodes:
             raise tornado.web.HTTPError(404)
-        node = nodes[name]
+        node = self._nodes[name]
         self.render(
             "node.html",
             node=node,
-            max_versions=max_versions,
+            max_versions=self._max_versions,
             node_highlight=node_highlight,
             app_highlight=app_highlight)
 
 
 class VersionsApiHandler(BaseHandler):
+    #def initialize(self, nodes=None, versions=None, max_versions=None):
+    #    self._nodes = nodes
+    #    self._versions = versions
+    #    self._max_versions = max_versions
+
     def get(self):
         app = self.get_argument('app')
         version = self.get_argument('version')
 
-        if app in versions:
-            versions[app].append(version)
+        if app in self._versions:
+            self._versions[app].append(version)
         else:
-            versions[app] = [version]
+            self._versions[app] = [version]
 
-        if app in max_versions:
-            if Version(max_versions[app]) < Version(version):
-                max_versions[app] = version
+        if app in self._max_versions:
+            if Version(self._max_versions[app]) < Version(version):
+                self._max_versions[app] = version
         else:
-            max_versions[app] = version
+            self._max_versions[app] = version
 
-        for name, node in nodes.items():
+        for name, node in self._nodes.items():
             if app in node.apps:
-                node.update_versions(versions)
+                node.update_versions(self._versions)
                 self.notify_clients(name)
 
-        self.write({'versions': versions, 'max_versions': max_versions})
+        self.write({'versions': self._versions, 'max_versions': self._max_versions})
 
 
 class EventHandler(BaseHandler):
+    #def initialize(self, received_events=None, serf_client=None, nodes=None):
+    #    self._received_events = received_events
+    #    self._serf_client = serf_client
+    #    self._nodes = nodes
+
     def get(self):
-        self.write({'events': received_events})
+        self.write({'events': self._received_events})
 
     def post(self):
         event_name = self.get_argument('event')
@@ -369,7 +495,7 @@ class EventHandler(BaseHandler):
             event = parse_event(self.request.body)
             event['name'] = event_name
             event['received'] = int(datetime.datetime.utcnow().strftime("%s")) * 1000
-            received_events.append(event)
+            self._received_events.append(event)
             if event_name.endswith('-status'):
                 self.handle_status(event, event_name)
         self.write("ok")
@@ -383,7 +509,7 @@ class EventHandler(BaseHandler):
         return items
 
     def handle_member(self):
-        refresh_members()
+        self.update_members()
         for node_name in self.collect_member_nodes():
             self.notify_clients(node_name)
 
@@ -392,28 +518,28 @@ class EventHandler(BaseHandler):
         app = event_name[:v]
         node_name = event['node']
         if self.is_transitioning(event, node_name):
-            node = nodes[node_name]
+            node = self._nodes[node_name]
             node.start_transition(app, event['to'])
             self.notify_clients(node_name)
         if self.is_transitioned(event, node_name):
-            node = nodes[node_name]
+            node = self._nodes[node_name]
             node.end_transition(app, event['version'])
             self.notify_clients(node_name)
 
     def is_transitioning(self, event, node_name):
-        return 'status' in event and event['status'] == 'transitioning' and node_name in nodes
+        return 'status' in event and event['status'] == 'transitioning' and node_name in self._nodes
 
     def is_transitioned(self, event, node_name):
-        return 'status' in event and event['status'] == 'transitioned' and node_name in nodes
+        return 'status' in event and event['status'] == 'transitioned' and node_name in self._nodes
 
 
-class DeployHandler(tornado.web.RequestHandler):
+class DeployHandler(BaseHandler):
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         version = self.get_argument('version')
         if len(node) and len(app) and len(version):
-            deploy(node, app, version)
+            self.deploy(node, app, version)
 
     def get(self):
         self.handle()
@@ -424,12 +550,12 @@ class DeployHandler(tornado.web.RequestHandler):
         self.write({'status': 'ok'})
 
 
-class StartHandler(tornado.web.RequestHandler):
+class StartHandler(BaseHandler):
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         if len(node) and len(app):
-            start(node, app)
+            self.start(node, app)
 
     def get(self):
         self.handle()
@@ -440,12 +566,12 @@ class StartHandler(tornado.web.RequestHandler):
         self.write({'status': 'ok'})
 
 
-class StopHandler(tornado.web.RequestHandler):
+class StopHandler(BaseHandler):
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         if len(node) and len(app):
-            stop(node, app)
+            self.stop(node, app)
 
     def get(self):
         self.handle()
@@ -456,13 +582,12 @@ class StopHandler(tornado.web.RequestHandler):
         self.write({'status': 'ok'})
 
 
-class RestartHandler(tornado.web.RequestHandler):
-
+class RestartHandler(BaseHandler):
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
         if len(node) and len(app):
-            restart(node, app)
+            self.restart(node, app)
 
     def get(self):
         self.handle()
