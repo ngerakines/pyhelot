@@ -39,11 +39,10 @@ def refresh_members():
     command = ['serf', 'members', '-format=json', '-detailed']
     response = subprocess.check_output(command)
     parsed_members = json.loads(response)
-    print parsed_members
     for member in parsed_members['members']:
         name = member['name']
         if name not in nodes:
-            nodes[name] = Node(name, {})
+            nodes[name] = Node(name)
         node = nodes[name]
         node.status = member['status']
         node.update_apps(member)
