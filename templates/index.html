@@ -26,35 +26,46 @@
             </button>
             <a class="navbar-brand" href="#">Helot</a>
         </div>
-        <div class="collapse navbar-collapse">
-            <ul class="nav navbar-nav">
-            </ul>
-            <form class="navbar-form navbar-right" role="search" method="get" action="/">
-                <div class="form-group">
-                    <input type="text" class="form-control" placeholder="*" name="query">
-                </div>
-                <button type="submit" class="btn btn-default">Filter</button>
-            </form>
-        </div>
     </div>
 </div>
 <div class="container">
+    <div id="alert_placeholder"></div>
     <div class="page-header">
-        <h1>Nodes</h1>
-
-        <p>
-            <button id="start-all" class="btn btn-primary btn-sm"><i class="fa fa-play"></i> Start All</button>
-            <button id="stop-all" class="btn btn-danger btn-sm"><i class="fa fa-power-off"></i> Stop All</button>
-            <button id="restart-all" class="btn btn-warning btn-sm"><i class="fa fa-spinner"></i> Restart All</button>
-        </p>
+        <div class="row" id="search">
+            <div class="col-md-6">
+                <form class="form-inline" role="form">
+                    <div class="form-group">
+                        <input type="text" class="form-control" id="query" name="query" placeholder="">
+                    </div>
+                    <div class="form-group">
+                        <label class="radio-inline">
+                            <input type="radio" id="radioNode" name="searchType" value="node" checked> Node
+                        </label>
+                        <label class="radio-inline">
+                            <input type="radio" id="radioApp" name="searchType" value="app"> App
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-default">Search</button>
+                </form>
+            </div>
+            <div class="col-md-6">
+                <p class="pull-right">
+                    <button id="start-all" class="btn btn-primary btn-sm"><i class="fa fa-play"></i> Start All</button>
+                    <button id="stop-all" class="btn btn-danger btn-sm"><i class="fa fa-power-off"></i> Stop All</button>
+                    <button id="restart-all" class="btn btn-warning btn-sm"><i class="fa fa-spinner"></i> Restart All</button>
+                </p>
+            </div>
+        </div>
     </div>
-    <div class="row" id="nodes">
-        {% for name, node in nodes.items() %}
+    {% for node_row in nodes %}
+    <div class="row">
+        {% for node_name, node in node_row %}
         <div class="col-md-4" id="{{ node.id() }}" class="node">
             {% module Template("node.html", node=node, max_versions=max_versions, node_highlight=node_highlight, app_highlight=app_highlight) %}
         </div>
         {% end %}
     </div>
+    {% end %}
 </div>
 <div id="footer">
     <div class="container">
@@ -66,8 +77,16 @@
 <script>
     $(document).ready(function () {
 
+        bootstrap_alert = function() {}
+        bootstrap_alert.warning = function() {
+            $('#alert_placeholder').html('<div id="alert_placeholder"><button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button><strong>Heads Up!</strong> There have been updates to network members. Please reload the page.</div>')
+        }
+
         var ws = new WebSocket("ws://localhost:9999/websocket");
         ws.onmessage = function (evt) {
+            {% if True %}
+                bootstrap_alert.warning();
+            {% else %}
             var json = JSON.parse(evt.data);
             selector = '#' + json.id
             if ($(selector).length == 0) {
@@ -91,6 +110,7 @@
                     command_node('restart', $(this).data('id'))
                 });
             });
+            {% end %}
         };
 
         $("#start-all").on('click', function (event) {

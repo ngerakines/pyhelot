@@ -1,8 +1,11 @@
 import os
-import datetime
 import json
 import hashlib
+import itertools
+import threading
 import serf
+from whoosh.index import create_in
+from whoosh.fields import *
 from semantic_version import validate, Spec, Version
 import tornado.auth
 import tornado.httpserver
@@ -11,14 +14,55 @@ import tornado.options
 import tornado.web
 import tornado.websocket
 from tornado.options import define, options
+from whoosh.qparser import MultifieldParser
 
 define("port", default=9999, help="run on the given port", type=int)
 
 UNKNOWN_VERSION = '?.?.?'
 
+index_lock = threading.RLock()
+
+def synchronized(method):
+    """ Work with instance method only !!! """
+    def new_method(self, *arg, **kws):
+        with index_lock:
+            return method(self, *arg, **kws)
+    return new_method
+
+
+class NodeSchema(SchemaClass):
+    id = ID(stored=True, unique=True)
+    name = NGRAM(stored=True)
+    apps = KEYWORD
+    status = ID
+
+
+@synchronized
+def index_node(index, nodes):
+    with index.writer() as writer:
+        for node_name, node in nodes.items():
+            writer.delete_by_term(u"name", node.name)
+            writer.add_document(
+                id=unicode(node.id()),
+                name=unicode(node.name),
+                status=unicode(node.status),
+                apps=unicode(' '.join(node.apps.keys())))
+
+
+@synchronized
+def query_node(query, index, nodes):
+    mparser = MultifieldParser([u"name", u"apps", u"status"], schema=index.schema)
+    q = mparser.parse(query)
+    found_nodes = {}
+    with index.searcher() as searcher:
+        results = searcher.search(q, limit=None)
+        for result in results:
+            name = result['name']
+            found_nodes[name] = nodes[name]
+    return found_nodes
+
 
 def parse_event(event):
-    print "parsing %s" % event
     event_data = dict()
     for part in event.split():
         if '=' in part:
@@ -33,6 +77,12 @@ def node_id(node_name):
     return hashlib.md5(node_name).hexdigest()[0:9]
 
 
+def group_nodes(nodes):
+    iterable = sorted(nodes.items(), key=lambda x: x[1])
+    args = [iter(iterable)] * 3
+    return ([e for e in t if e != None] for t in itertools.izip_longest(*args))
+
+
 class App(object):
     def __init__(self, name, version, status, upgrades=[], downgrades=[]):
         self._name = name
@@ -40,6 +90,9 @@ class App(object):
         self._status = status
         self._upgrades = upgrades
         self._downgrades = downgrades
+
+    def __repr__(self):
+        return "App{name='%s', version='%s', status='%s', upgrades=%s, downgrades=%s}" % (self._name, self._version, self._status, self._upgrades, self._downgrades)
 
     @property
     def name(self):
@@ -84,11 +137,18 @@ class App(object):
 
 
 class Node(object):
-    def __init__(self, name, status='unknown', apps={}, transitions={}):
+    def __init__(self, name, status='unknown', apps=None, transitions=None):
+        if not transitions:
+            transitions = {}
+        if not apps:
+            apps = {}
         self._name = name
         self._apps = apps
         self._status = status
         self._transitions = transitions
+
+    def __repr__(self):
+        return "Node{name='%s', status='%s', apps=%s, transitions=%s}" % (self._name, self._status, self._apps, self._transitions)
 
     def id(self):
         return node_id(self._name)
@@ -120,7 +180,7 @@ class Node(object):
     def update_apps(self, member):
         tags = member['Tags'] if 'Tags' in member else {}
         given_apps = tags['apps'].split(',') if 'apps' in tags else []
-        for key, app in self.apps.items():
+        for key, app in self._apps.items():
             if key in given_apps:
                 if key in tags:
                     version, status = tuple(tags[key].split(','))
@@ -130,9 +190,9 @@ class Node(object):
                 app.status = 'gone'
         for given_app in given_apps:
             ## NKG: I'm sure there is a better way to do this.
-            if given_app not in self.apps.keys():
+            if given_app not in self._apps.keys():
                 version, status = tuple(tags[given_app].split(','))
-                self.apps[given_app] = App(given_app, version, status)
+                self._apps[given_app] = App(given_app, version, status)
 
     def update_versions(self, given_versions):
         for name, app in self.apps.items():
@@ -169,6 +229,7 @@ class Node(object):
 
 
 class Application(tornado.web.Application):
+
     def __init__(self):
         ## NKG: Is this the right way to do it?
         self._serf_client = serf.Client(auto_reconnect=True)
@@ -177,6 +238,12 @@ class Application(tornado.web.Application):
         self._max_versions = {}
         self._clients = []
         self._received_events = []
+        index_dir = os.path.join(os.path.dirname(__file__), "index")
+        if os.path.exists(index_dir):
+            import shutil
+            shutil.rmtree(index_dir)
+        os.mkdir(index_dir)
+        self._search_index = create_in(os.path.join(os.path.dirname(__file__), "index"), NodeSchema)
 
         handlers = [
             (r"/", MainHandler, (dict(
@@ -185,7 +252,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             ))),
             (r"/event", EventHandler, dict(
                 serf_client=self._serf_client,
@@ -193,7 +261,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/api/refresh", RefreshHandler, dict(
                 serf_client=self._serf_client,
@@ -201,7 +270,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/api/versions", VersionsApiHandler, dict(
                 serf_client=self._serf_client,
@@ -209,7 +279,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/api/deploy", DeployHandler, dict(
                 serf_client=self._serf_client,
@@ -217,7 +288,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/api/start", StartHandler, dict(
                 serf_client=self._serf_client,
@@ -225,7 +297,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/api/stop", StopHandler, dict(
                 serf_client=self._serf_client,
@@ -233,7 +306,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/api/restart", RestartHandler, dict(
                 serf_client=self._serf_client,
@@ -241,7 +315,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r'/api/node', NodeHandler, dict(
                 serf_client=self._serf_client,
@@ -249,7 +324,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             )),
             (r"/websocket", SocketHandler, dict(
                 serf_client=self._serf_client,
@@ -257,7 +333,8 @@ class Application(tornado.web.Application):
                 versions=self._versions,
                 max_versions=self._max_versions,
                 received_events=self._received_events,
-                clients=self._clients
+                clients=self._clients,
+                search_index=self._search_index
             ))
         ]
         settings = dict(
@@ -271,6 +348,7 @@ class Application(tornado.web.Application):
 
 
 class BaseHandler(tornado.web.RequestHandler):
+
     def initialize(
             self,
             serf_client=None,
@@ -278,22 +356,22 @@ class BaseHandler(tornado.web.RequestHandler):
             versions=None,
             max_versions=None,
             received_events=None,
-            clients=None):
+            clients=None,
+            search_index=None):
         self._serf_client = serf_client
         self._nodes = nodes
         self._versions = versions
         self._max_versions = max_versions
         self._clients = clients
         self._received_events = received_events
+        self._search_index = search_index
 
     def update_members(self):
         members_response = self._serf_client.members().request()
-        print members_response
         if len(members_response) > 1:
             print "More than one response for command received."
         if len(members_response) > 0:
             body = members_response[0].body
-            print body
             if 'Members' not in body:
                 print "No members element found in body."
                 return
@@ -304,6 +382,7 @@ class BaseHandler(tornado.web.RequestHandler):
                 node = self._nodes[node_name]
                 node.status = member['Status']
                 node.update_apps(member)
+        index_node(self._search_index, self._nodes)
 
     def notify_clients(self, node_name):
         payload = json.dumps({'id': node_id(node_name), 'name': node_name})
@@ -320,35 +399,37 @@ class BaseHandler(tornado.web.RequestHandler):
         event = "%s-deploy" % app
         payload = "node=%s version=%s'" % (node, version)
         self.publish_event(event, payload)
+        index_node(self._search_index, self._nodes)
 
     def start(self, node, app):
         event = "%s-start" % app
         payload = "node=%s" % node
         self.publish_event(event, payload)
+        index_node(self._search_index, self._nodes)
 
     def stop(self, node, app):
         event = "%s-stop" % app
         payload = "node=%s" % node
         self.publish_event(event, payload)
+        index_node(self._search_index, self._nodes)
 
     def restart(self, node, app):
         event = "%s-restart" % app
         payload = "node=%s" % node
         self.publish_event(event, payload)
+        index_node(self._search_index, self._nodes)
 
 
 class RefreshHandler(BaseHandler):
-    #def initialize(self, serf_client=None, nodes=None):
-    #    self._serf_client = serf_client
-    #    self._nodes = nodes
 
     def get(self):
-        self.refresh_members(self._serf_client, self._nodes)
+        self.update_members()
         self.write(self._nodes)
 
 
 ## NKG: This is being done poorly.
 class SocketHandler(tornado.websocket.WebSocketHandler):
+
     def initialize(
             self,
             serf_client=None,
@@ -356,13 +437,15 @@ class SocketHandler(tornado.websocket.WebSocketHandler):
             versions=None,
             max_versions=None,
             received_events=None,
-            clients=None):
+            clients=None,
+            search_index=None):
         self._serf_client = serf_client
         self._nodes = nodes
         self._versions = versions
         self._max_versions = max_versions
         self._clients = clients
         self._received_events = received_events
+        self._search_index = search_index
 
     def open(self):
         if self not in self._clients:
@@ -383,8 +466,6 @@ def node_highlight(node):
 
 
 def app_highlight(app, node):
-    # {% if app.name in max_versions and max_versions[app.name] == app.version %}class="success"
-    # {% elif app.name in node.transitions %}class="info" {% else %}class="warning"{% end %}
     if app.name in node.transitions:
         return 'info'
     if app.status == 'running':
@@ -393,47 +474,25 @@ def app_highlight(app, node):
 
 
 class MainHandler(BaseHandler):
-    #def initialize(self, nodes=None, max_versions=None):
-    #    self._nodes = nodes
-    #    self._max_versions = max_versions
 
     def get(self):
-        query = self.get_argument('query', '*')
-        matched_nodes = self.filter(query)
-
+        (is_query, query, matched_nodes) = self.filter(self.get_argument('query', ''))
         self.render(
             "index.html",
-            nodes=matched_nodes,
+            is_query=is_query,
+            nodes=group_nodes(matched_nodes),
             max_versions=self._max_versions,
             node_highlight=node_highlight,
             app_highlight=app_highlight)
 
     def filter(self, query):
-        found_nodes = {}
-        for name, node in self._nodes.items():
-            if self.node_match(node, query) and len(node.apps):
-                found_nodes[name] = node
-        return found_nodes
-
-    def node_match(self, node, query):
-        if query == '*':
-            return True
-        if query in node.name:
-            return True
-        for app_name, app in node.apps.items():
-            if query in app_name:
-                return True
-            if query in app.version:
-                return True
-            if query in app.status:
-                return True
-        return False
+        if query == '':
+            return False, None, self._nodes
+        found_nodes = query_node(query, self._search_index, self._nodes)
+        return True, query, found_nodes
 
 
 class NodeHandler(BaseHandler):
-    #def initialize(self, nodes=None, max_versions=None):
-    #    self._nodes = nodes
-    #    self._max_versions = max_versions
 
     def get(self):
         name = self.get_argument('node')
@@ -449,10 +508,6 @@ class NodeHandler(BaseHandler):
 
 
 class VersionsApiHandler(BaseHandler):
-    #def initialize(self, nodes=None, versions=None, max_versions=None):
-    #    self._nodes = nodes
-    #    self._versions = versions
-    #    self._max_versions = max_versions
 
     def get(self):
         app = self.get_argument('app')
@@ -478,10 +533,6 @@ class VersionsApiHandler(BaseHandler):
 
 
 class EventHandler(BaseHandler):
-    #def initialize(self, received_events=None, serf_client=None, nodes=None):
-    #    self._received_events = received_events
-    #    self._serf_client = serf_client
-    #    self._nodes = nodes
 
     def get(self):
         self.write({'events': self._received_events})
@@ -533,6 +584,7 @@ class EventHandler(BaseHandler):
 
 
 class DeployHandler(BaseHandler):
+
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
@@ -550,6 +602,7 @@ class DeployHandler(BaseHandler):
 
 
 class StartHandler(BaseHandler):
+
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
@@ -566,6 +619,7 @@ class StartHandler(BaseHandler):
 
 
 class StopHandler(BaseHandler):
+
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
@@ -582,6 +636,7 @@ class StopHandler(BaseHandler):
 
 
 class RestartHandler(BaseHandler):
+
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')

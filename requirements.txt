@@ -1,3 +1,4 @@
 tornado==3.2
 semantic_version=2.2.2
 msgpack-python
+whoosh=2.5.6
