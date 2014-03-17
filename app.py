@@ -1,5 +1,4 @@
 import os
-import subprocess
 import datetime
 import json
 import hashlib
