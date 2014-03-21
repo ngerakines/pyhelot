@@ -22,13 +22,6 @@ UNKNOWN_VERSION = '?.?.?'
 
 index_lock = threading.RLock()
 
-def synchronized(method):
-    """ Work with instance method only !!! """
-    def new_method(self, *arg, **kws):
-        with index_lock:
-            return method(self, *arg, **kws)
-    return new_method
-
 
 class NodeSchema(SchemaClass):
     id = ID(stored=True, unique=True)
@@ -37,28 +30,28 @@ class NodeSchema(SchemaClass):
     status = ID
 
 
-@synchronized
 def index_node(index, nodes):
-    with index.writer() as writer:
-        for node_name, node in nodes.items():
-            writer.delete_by_term(u"name", node.name)
-            writer.add_document(
-                id=unicode(node.id()),
-                name=unicode(node.name),
-                status=unicode(node.status),
-                apps=unicode(' '.join(node.apps.keys())))
+    with index_lock:
+        with index.writer() as writer:
+            for node_name, node in nodes.items():
+                writer.delete_by_term(u"name", node.name)
+                writer.add_document(
+                    id=unicode(node.id()),
+                    name=unicode(node.name),
+                    status=unicode(node.status),
+                    apps=unicode(' '.join(node.apps.keys())))
 
 
-@synchronized
 def query_node(query, index, nodes):
-    mparser = MultifieldParser([u"name", u"apps", u"status"], schema=index.schema)
-    q = mparser.parse(query)
     found_nodes = {}
-    with index.searcher() as searcher:
-        results = searcher.search(q, limit=None)
-        for result in results:
-            name = result['name']
-            found_nodes[name] = nodes[name]
+    with index_lock:
+        mparser = MultifieldParser([u"name", u"apps", u"status"], schema=index.schema)
+        q = mparser.parse(query)
+        with index.searcher() as searcher:
+            results = searcher.search(q, limit=None)
+            for result in results:
+                name = result['name']
+                found_nodes[name] = nodes[name]
     return found_nodes
 
 
@@ -80,11 +73,15 @@ def node_id(node_name):
 def group_nodes(nodes):
     iterable = sorted(nodes.items(), key=lambda x: x[1])
     args = [iter(iterable)] * 3
-    return ([e for e in t if e != None] for t in itertools.izip_longest(*args))
+    return ([e for e in t if e is not None] for t in itertools.izip_longest(*args))
 
 
 class App(object):
-    def __init__(self, name, version, status, upgrades=[], downgrades=[]):
+    def __init__(self, name, version, status, upgrades=None, downgrades=None):
+        if not downgrades:
+            downgrades = []
+        if not upgrades:
+            upgrades = []
         self._name = name
         self._version = version
         self._status = status
@@ -92,7 +89,8 @@ class App(object):
         self._downgrades = downgrades
 
     def __repr__(self):
-        return "App{name='%s', version='%s', status='%s', upgrades=%s, downgrades=%s}" % (self._name, self._version, self._status, self._upgrades, self._downgrades)
+        return "App{name='%s', version='%s', status='%s', upgrades=%s, downgrades=%s}" % (
+            self._name, self._version, self._status, self._upgrades, self._downgrades)
 
     @property
     def name(self):
@@ -148,7 +146,8 @@ class Node(object):
         self._transitions = transitions
 
     def __repr__(self):
-        return "Node{name='%s', status='%s', apps=%s, transitions=%s}" % (self._name, self._status, self._apps, self._transitions)
+        return "Node{name='%s', status='%s', apps=%s, transitions=%s}" % (
+            self._name, self._status, self._apps, self._transitions)
 
     def id(self):
         return node_id(self._name)
@@ -216,7 +215,8 @@ class Node(object):
             else:
                 app.version = version
 
-    def version_match(self, app, given_versions, way):
+    @staticmethod
+    def version_match(app, given_versions, way):
         app_versions = given_versions[app.name] if app.name in given_versions else []
         if validate(app.version):
             matching_versions = []
@@ -229,7 +229,6 @@ class Node(object):
 
 
 class Application(tornado.web.Application):
-
     def __init__(self):
         ## NKG: Is this the right way to do it?
         self._serf_client = serf.Client(auto_reconnect=True)
@@ -241,6 +240,7 @@ class Application(tornado.web.Application):
         index_dir = os.path.join(os.path.dirname(__file__), "index")
         if os.path.exists(index_dir):
             import shutil
+
             shutil.rmtree(index_dir)
         os.mkdir(index_dir)
         self._search_index = create_in(os.path.join(os.path.dirname(__file__), "index"), NodeSchema)
@@ -349,6 +349,16 @@ class Application(tornado.web.Application):
 
 class BaseHandler(tornado.web.RequestHandler):
 
+    def __init__(self, application, request, **kwargs):
+        super(BaseHandler, self).__init__(application, request, **kwargs)
+        self._serf_client = None
+        self._nodes = None
+        self._versions = None
+        self._max_versions = None
+        self._clients = None
+        self._received_events = None
+        self._search_index = None
+
     def initialize(
             self,
             serf_client=None,
@@ -421,7 +431,6 @@ class BaseHandler(tornado.web.RequestHandler):
 
 
 class RefreshHandler(BaseHandler):
-
     def get(self):
         self.update_members()
         self.write(self._nodes)
@@ -429,6 +438,16 @@ class RefreshHandler(BaseHandler):
 
 ## NKG: This is being done poorly.
 class SocketHandler(tornado.websocket.WebSocketHandler):
+
+    def __init__(self, application, request, **kwargs):
+        super(SocketHandler, self).__init__(application, request, **kwargs)
+        self._serf_client = None
+        self._nodes = None
+        self._versions = None
+        self._max_versions = None
+        self._clients = None
+        self._received_events = None
+        self._search_index = None
 
     def initialize(
             self,
@@ -474,7 +493,6 @@ def app_highlight(app, node):
 
 
 class MainHandler(BaseHandler):
-
     def get(self):
         (is_query, query, matched_nodes) = self.filter(self.get_argument('query', ''))
         self.render(
@@ -493,7 +511,6 @@ class MainHandler(BaseHandler):
 
 
 class NodeHandler(BaseHandler):
-
     def get(self):
         name = self.get_argument('node')
         if name not in self._nodes:
@@ -508,7 +525,6 @@ class NodeHandler(BaseHandler):
 
 
 class VersionsApiHandler(BaseHandler):
-
     def get(self):
         app = self.get_argument('app')
         version = self.get_argument('version')
@@ -533,7 +549,6 @@ class VersionsApiHandler(BaseHandler):
 
 
 class EventHandler(BaseHandler):
-
     def get(self):
         self.write({'events': self._received_events})
 
@@ -584,7 +599,6 @@ class EventHandler(BaseHandler):
 
 
 class DeployHandler(BaseHandler):
-
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
@@ -602,7 +616,6 @@ class DeployHandler(BaseHandler):
 
 
 class StartHandler(BaseHandler):
-
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
@@ -619,7 +632,6 @@ class StartHandler(BaseHandler):
 
 
 class StopHandler(BaseHandler):
-
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
@@ -636,7 +648,6 @@ class StopHandler(BaseHandler):
 
 
 class RestartHandler(BaseHandler):
-
     def handle(self):
         node = self.get_argument('node')
         app = self.get_argument('app')
