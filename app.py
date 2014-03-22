@@ -3,6 +3,7 @@ import json
 import hashlib
 import itertools
 import threading
+
 import serf
 from whoosh.index import create_in
 from whoosh.fields import *
@@ -15,6 +16,7 @@ import tornado.web
 import tornado.websocket
 from tornado.options import define, options
 from whoosh.qparser import MultifieldParser
+
 
 define("port", default=9999, help="run on the given port", type=int)
 
@@ -45,8 +47,8 @@ def index_node(index, nodes):
 def query_node(query, index, nodes):
     found_nodes = {}
     with index_lock:
-        mparser = MultifieldParser([u"name", u"apps", u"status"], schema=index.schema)
-        q = mparser.parse(query)
+        parser = MultifieldParser([u"name", u"apps", u"status"], schema=index.schema)
+        q = parser.parse(query)
         with index.searcher() as searcher:
             results = searcher.search(q, limit=None)
             for result in results:
@@ -348,7 +350,6 @@ class Application(tornado.web.Application):
 
 
 class BaseHandler(tornado.web.RequestHandler):
-
     def __init__(self, application, request, **kwargs):
         super(BaseHandler, self).__init__(application, request, **kwargs)
         self._serf_client = None
@@ -438,7 +439,6 @@ class RefreshHandler(BaseHandler):
 
 ## NKG: This is being done poorly.
 class SocketHandler(tornado.websocket.WebSocketHandler):
-
     def __init__(self, application, request, **kwargs):
         super(SocketHandler, self).__init__(application, request, **kwargs)
         self._serf_client = None
