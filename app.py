@@ -3,8 +3,8 @@ import json
 import hashlib
 import itertools
 import threading
-
 import serf
+
 from whoosh.index import create_in
 from whoosh.fields import *
 from semantic_version import validate, Spec, Version
@@ -350,15 +350,6 @@ class Application(tornado.web.Application):
 
 
 class BaseHandler(tornado.web.RequestHandler):
-    def __init__(self, application, request, **kwargs):
-        super(BaseHandler, self).__init__(application, request, **kwargs)
-        self._serf_client = None
-        self._nodes = None
-        self._versions = None
-        self._max_versions = None
-        self._clients = None
-        self._received_events = None
-        self._search_index = None
 
     def initialize(
             self,
@@ -439,16 +430,6 @@ class RefreshHandler(BaseHandler):
 
 ## NKG: This is being done poorly.
 class SocketHandler(tornado.websocket.WebSocketHandler):
-    def __init__(self, application, request, **kwargs):
-        super(SocketHandler, self).__init__(application, request, **kwargs)
-        self._serf_client = None
-        self._nodes = None
-        self._versions = None
-        self._max_versions = None
-        self._clients = None
-        self._received_events = None
-        self._search_index = None
-
     def initialize(
             self,
             serf_client=None,
